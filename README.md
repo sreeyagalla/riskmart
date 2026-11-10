@@ -4,6 +4,10 @@ A small market-risk analytics stack: **public data -> ETL -> SQL mart with data-
 measures -> REST API (JSON/XML) -> a dashboard a non-technical risk manager can use**, including a
 question box that answers *only* from computed numbers.
 
+![chat assistant](docs/chat.png)
+
+*The chat assistant (`/chat`): live tool-call timeline, result cards, grounded answer with sources, a human-approval gate, and a refusal.*
+
 ![dashboard](docs/dashboard.png)
 
 ## What it demonstrates
@@ -19,6 +23,7 @@ question box that answers *only* from computed numbers.
 | JSON REST API + XML export | `riskmart/api.py` (`/api/report`, `/api/report.xml`, `/docs`) |
 | Dashboard for non-technical users (KPIs, distribution, per-class bars, DQ table) | `riskmart/static/index.html` |
 | **ML:** unsupervised volatility-regime model (2-state Gaussian mixture, scikit-learn) -> regime-conditional VaR, backtested head-to-head against plain VaR | `riskmart/regime.py`, `/api/regime` |
+| **Chat assistant** (`/chat`): streamed answers (SSE), visible tool calls, generative result cards, follow-up questions, human-in-the-loop approval before the data-refresh action, citations for every figure | `riskmart/agent.py`, `static/chat.html` |
 | Grounded natural-language Q&A with refusal behaviour | `riskmart/qa.py`, `tests/test_grounding.py` |
 | Methodology documentation for reviewers | `docs/METHODOLOGY.md` |
 
@@ -27,9 +32,9 @@ question box that answers *only* from computed numbers.
 ```bash
 pip install -r requirements.txt
 python -m riskmart etl              # downloads public FRED series, builds data/riskmart.db
-python -m riskmart serve            # http://127.0.0.1:8000  (dashboard) and /docs (OpenAPI)
+python -m riskmart serve            # http://127.0.0.1:8000 (dashboard), /chat (assistant), /docs (OpenAPI)
 python -m riskmart ask "What is the 99% VaR of the portfolio?"
-python -m pytest                    # 43 tests, offline, ~25 s
+python -m pytest                    # 54 tests, offline, ~20 s
 ```
 
 Requires Python 3.12+ and network access for the `etl` step only (the tests are offline;
@@ -73,6 +78,13 @@ FRED CSV (public, no key)            seeded synthetic book (10 positions)
   realised P&L volatility, refit on each backtest day using only prior data (no look-ahead). It is unsupervised, so there are no
   labels to leak. Its unit test plants a known calm/stressed process in synthetic data and checks the model recovers it (>85% agreement).
   The regime VaR is checked against a hand-computed conditional quantile of the returned labels.
+- **Agent events, not free-form generation.** `/api/chat` streams typed events (`plan`, `tool_call`, `tool_result`, `card`,
+  `token`, `sources`, `approval_required`, `refusal`). The UI renders cards from the same figures that back the text.
+  Follow-ups ("and at 95%?", "what about credit?") reuse the previous validated intent with new parameters, and go through the same
+  guardrails (forecast and unknown-name refusals still apply).
+- **Human-in-the-loop is enforced server-side.** The only state-changing action (refresh data = re-download and rebuild the mart) is never run
+  by the chat turn; the agent issues a single-use approval id and the action runs only when `/api/chat/approve` receives it with `approve: true`.
+  Tests check that nothing runs before approval, forged and reused ids get 403, and rejection changes nothing.
 - **Tests that prove the claim.** `tests/independent.py` recomputes VaR, ES, by-class VaR, worst day, CS01
   and exposures straight from the SQL tables with plain Python (no shared code with `risk.py`, bonds priced by
   summing discounted cash flows, hand-written percentile). `tests/test_grounding.py` asserts the Q&A figures
@@ -83,8 +95,8 @@ FRED CSV (public, no key)            seeded synthetic book (10 positions)
 
 **Real**
 - Market data: 10 daily series from FRED's public `fredgraph.csv` endpoint (S&P 500, NASDAQ Composite, USD/EUR,
-  JPY/USD, Brent, UST 2/5/10y, ICE BofA IG and HY OAS). At my last run: 24,000 source rows, 749 aligned dates
-  (2023-11-10 to 2026-11-05).
+  JPY/USD, Brent, UST 2/5/10y, ICE BofA IG and HY OAS). At my last run: 23,998 source rows, 750 aligned dates
+  (2023-11-13 to 2026-11-09).
 - All risk numbers are computed from that data, not hard-coded.
 
 **Synthetic**
@@ -94,22 +106,27 @@ FRED CSV (public, no key)            seeded synthetic book (10 positions)
 - The unit-test market data is synthetic random walks in FRED CSV format (so tests run offline); the real-data test uses the real mart.
 
 **Result of the ML model (real data, last run): it does not beat the baseline.**
-Over the 248-day backtest, regime-conditional VaR and plain VaR had the *same* number of exceptions: 4 vs 4 at 99% (2.5 expected) and
-20 vs 20 at 95% (12.4 expected; the Kupiec test rejects at 5% for *both* at 95%). On 9 of 248 days the conditional sample was too thin and the model
+Over the 249-day backtest, regime-conditional VaR and plain VaR had the *same* number of exceptions: 4 vs 4 at 99% (2.5 expected) and
+20 vs 20 at 95% (12.4 expected; the Kupiec test rejects at 5% for *both* at 95%). On 9 of 249 days the conditional sample was too thin and the model
 fell back to plain VaR. Today's classification is borderline (P(stressed) ~43%). So the model is a descriptive tool (a labelled view of
 volatility states and a more conservative VaR when stressed), not a demonstrated accuracy improvement. The Q&A can answer "what regime are we in?"
 from these computed figures.
 
 **Limitations (read before quoting any number)**
 - **History is short.** FRED currently serves only ~3 years of the ICE BofA spread series, which limits the common
-  panel to ~749 days. The default 500-day lookback + 250-day backtest therefore needs 751; the backtest
-  silently shrinks to what is available (248 days at my last run) and the DQ table shows a `history_depth` warning.
+  panel to ~750 days. The default 500-day lookback + 250-day backtest therefore needs 751; the backtest
+  silently shrinks to what is available (249 days at my last run) and the DQ table shows a `history_depth` warning.
 - **The backtest is on hypothetical P&L** of today's constant book and uses the same factor history that the model
   is estimated on (VaR at day *t* uses only days before *t*, so it is out-of-sample, but it is not realised P&L
-  and a 248-day window has little power: expect ~2.5 exceptions at 99%). Do not read a Kupiec "pass" as model validation.
+  and a 249-day window has little power: expect ~2.5 exceptions at 99%). Do not read a Kupiec "pass" as model validation.
 - Simplifications: bonds are flat-yield priced with no roll-down/ageing, and 2y/5y/10y Treasury yields are used
   as benchmarks directly (no curve interpolation); the HY/IG bond uses one OAS series as the spread; positions
   are specified by USD market value; FX/equity positions are delta-one; no options, no liquidity or credit-default risk.
+- **The "agent" is a deterministic tool-calling loop, not an autonomous LLM agent.** The planner is rule-based; the tool timeline lists the real
+  functions that run (timed as one chain, not individually). The streamed text is the templated, grounded answer delivered word by word
+  over SSE, not LLM-generated tokens. Conversation memory is just the previous intent, sent back by the client.
+- The unknown-entity guardrail checks capitalised words, so a lowercase company name ("tesla var") is not recognised as an unknown entity
+  and would be answered as a plain portfolio-VaR question.
 - Parametric VaR is zero-mean normal on the scenario-P&L standard deviation, i.e. a distribution-fit shortcut.
 - **Not** MSCI RiskMetrics, SQL Server/Sybase/Oracle or Pentaho. The SQL is plain SQLite with window functions, and the ETL is Python.
   Nothing here was run on or validated against those products.

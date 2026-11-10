@@ -100,7 +100,9 @@ _CLASS_WORDS = {"equity": "Equity", "equities": "Equity", "stock": "Equity", "st
 _ALLOWED_CAPS = {"var", "es", "fx", "cs01", "dv01", "i", "what", "how", "show", "are", "is", "which", "was",
                  "were", "do", "does", "give", "tell", "list", "our", "the", "kupiec", "ig", "hy", "usd",
                  "equity", "credit", "rates", "commodity", "treasury", "treasuries", "portfolio", "data",
-                 "ust", "dq", "etl"}
+                 "ust", "dq", "etl", "and", "also", "but", "so", "please", "can", "could", "would", "whats", "hi",
+                 "hello", "hey", "thanks", "now", "refresh", "update", "show", "any", "has", "have", "did", "when",
+                 "where", "who", "much", "many", "overall", "total", "average", "median", "historical", "parametric"}
 
 
 def parse_rules(q: str):
@@ -109,7 +111,7 @@ def parse_rules(q: str):
     if _FORECAST.search(q):
         return None, "forecast/advice"
     # unknown named entities (e.g. company names) -> refuse rather than guess
-    for w in re.findall(r"\b[A-Z][A-Za-z0-9&]+\b", q)[1:]:
+    for w in re.findall(r"\b[A-Z][A-Za-z0-9&]+\b", q):
         if w.lower() not in _ALLOWED_CAPS:
             return None, f"unknown entity {w}"
     conf = 0.99
@@ -198,7 +200,11 @@ def answer_question(conn: sqlite3.Connection, question: str,
             parser = "llm"
     if intent is None:
         return Answer(False, REFUSAL, parser=parser)
+    return answer_intent(conn, intent, parser)
 
+
+def answer_intent(conn: sqlite3.Connection, intent: Intent, parser: str = "rules") -> Answer:
+    """Execute a validated intent against the mart and compose the grounded answer."""
     rep = risk.build_report(conn, cl=intent.confidence)
     P, W = rep["portfolio"], rep["window"]
     figs: list[Figure] = []

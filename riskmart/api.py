@@ -1,21 +1,32 @@
 """REST API + static dashboard.  JSON everywhere; /api/report.xml for XML consumers."""
 from __future__ import annotations
 
+import json
 import sqlite3
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
-from . import config, qa, regime, risk
+from . import agent, config, etl, qa, regime, risk
 
 STATIC = Path(__file__).parent / "static"
 
 
 class Ask(BaseModel):
     question: str
+
+
+class Chat(BaseModel):
+    question: str
+    context: dict | None = None      # last intent, returned by the previous turn (enables follow-ups)
+
+
+class Approve(BaseModel):
+    id: str
+    approve: bool
 
 
 def _to_xml(tag: str, obj) -> ET.Element:
@@ -31,8 +42,9 @@ def _to_xml(tag: str, obj) -> ET.Element:
     return el
 
 
-def create_app(db_path: Path | str = config.DEFAULT_DB) -> FastAPI:
+def create_app(db_path: Path | str = config.DEFAULT_DB, fetcher=None, token_delay: float = 0.012) -> FastAPI:
     app = FastAPI(title="riskmart", version="0.1.0")
+    approvals = agent.Approvals()
 
     def conn() -> sqlite3.Connection:
         if not Path(db_path).exists():
@@ -108,6 +120,34 @@ def create_app(db_path: Path | str = config.DEFAULT_DB) -> FastAPI:
             return qa.answer_question(c, body.question).to_dict()
         finally:
             c.close()
+
+    @app.post("/api/chat")
+    def chat(body: Chat):
+        """Server-sent events: plan, tool_call, tool_result, card, token, sources, final, done."""
+        def events():
+            c = conn()
+            try:
+                for ev in agent.stream(c, body.question[:500], body.context, approvals.issue, token_delay):
+                    yield "data: " + json.dumps(ev) + "\n\n"
+            finally:
+                c.close()
+        return StreamingResponse(events(), media_type="text/event-stream",
+                                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+    @app.post("/api/chat/approve")
+    def approve(body: Approve):
+        """Human-in-the-loop gate. Only an action previously offered by the agent can run, once."""
+        action = approvals.consume(body.id)
+        if action is None:
+            raise HTTPException(403, "unknown or already-used approval id")
+        if not body.approve:
+            return {"action": action, "status": "rejected", "message": "No changes were made."}
+        res = etl.run_etl(db_path, **({"fetcher": fetcher} if fetcher else {}))
+        return {"action": action, "status": "executed", "result": res}
+
+    @app.get("/chat")
+    def chat_page():
+        return FileResponse(STATIC / "chat.html")
 
     @app.get("/")
     def index():

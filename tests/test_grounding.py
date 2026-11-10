@@ -89,6 +89,8 @@ UNSUPPORTED = [
     "Predict next week's loss",
     "Tell me a joke",
     "Why did the portfolio lose money in April?",
+    "Tesla 99% VaR",                                   # unknown entity as the FIRST word
+    "Apple VaR please",
 ]
 
 

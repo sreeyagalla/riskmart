@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
 <title>riskmart - market risk dashboard</title>
 <style>
 :root{--bg:#f7f7f5;--card:#fff;--ink:#1c1c1a;--ink2:#55554f;--mute:#85857d;--line:#e3e3dd;
@@ -38,7 +39,7 @@ button,.chip{background:var(--accent);color:#fff;border:0;border-radius:6px;padd
 <div class="ctrl">
   <label>Confidence <select id="cl"><option value="0.95">95%</option><option value="0.975">97.5%</option><option value="0.99" selected>99%</option></select></label>
   <label>Lookback <select id="lb"><option>250</option><option selected>500</option></select> days</label>
-  <a href="/api/report.xml" style="color:var(--accent)">XML</a> <a href="/api/report" style="color:var(--accent)">JSON</a> <a href="/docs" style="color:var(--accent)">API docs</a>
+  <a href="/api/report.xml" style="color:var(--accent)">XML</a> <a href="/api/report" style="color:var(--accent)">JSON</a> <a href="/docs" style="color:var(--accent)">API docs</a> <a href="/chat" style="color:var(--accent);font-weight:600">Chat assistant &rarr;</a>
 </div>
 <div class="grid kpis" id="kpis"></div>
 <div class="grid two">
