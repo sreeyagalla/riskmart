@@ -50,7 +50,10 @@ def load_last_levels(conn: sqlite3.Connection) -> tuple[str, dict]:
 
 
 def load_positions(conn: sqlite3.Connection) -> pd.DataFrame:
-    return pd.read_sql_query("SELECT * FROM positions ORDER BY position_id", conn)
+    df = pd.read_sql_query("SELECT * FROM positions ORDER BY position_id", conn)
+    # normalise SQL NULL to None: depending on the pandas version it may load as NaN (which is truthy)
+    df["spread_factor_id"] = df["spread_factor_id"].astype(object).where(df["spread_factor_id"].notna(), None)
+    return df
 
 
 # ---------------------------------------------------------------- scenarios
