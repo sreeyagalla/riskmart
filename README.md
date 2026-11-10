@@ -1,5 +1,7 @@
 # riskmart
 
+**Live demo: https://sreeyagalla.github.io/riskmart/** (static replay of precomputed answers; see "Static demo" below)
+
 A small market-risk analytics stack: **public data -> ETL -> SQL mart with data-quality checks -> risk
 measures -> REST API (JSON/XML) -> a dashboard a non-technical risk manager can use**, including a
 question box that answers *only* from computed numbers.
@@ -24,6 +26,7 @@ question box that answers *only* from computed numbers.
 | Dashboard for non-technical users (KPIs, distribution, per-class bars, DQ table) | `riskmart/static/index.html` |
 | **ML:** unsupervised volatility-regime model (2-state Gaussian mixture, scikit-learn) -> regime-conditional VaR, backtested head-to-head against plain VaR | `riskmart/regime.py`, `/api/regime` |
 | **Chat assistant** (`/chat`): streamed answers (SSE), visible tool calls, generative result cards, follow-up questions, human-in-the-loop approval before the data-refresh action, citations for every figure | `riskmart/agent.py`, `static/chat.html` |
+| **Static live demo** on GitHub Pages: the same chat UI replaying answers the Python engine precomputed, with a JS port of the planner that is parity-tested against Python | `riskmart/snapshot.py`, `riskmart/static/static_backend.js` |
 | Grounded natural-language Q&A with refusal behaviour | `riskmart/qa.py`, `tests/test_grounding.py` |
 | Methodology documentation for reviewers | `docs/METHODOLOGY.md` |
 
@@ -34,7 +37,8 @@ pip install -r requirements.txt
 python -m riskmart etl              # downloads public FRED series, builds data/riskmart.db
 python -m riskmart serve            # http://127.0.0.1:8000 (dashboard), /chat (assistant), /docs (OpenAPI)
 python -m riskmart ask "What is the 99% VaR of the portfolio?"
-python -m pytest                    # 54 tests, offline, ~20 s
+python -m riskmart snapshot --out docs   # rebuild the static GitHub Pages demo from your mart
+python -m pytest                    # 56 tests, offline, ~30 s (the static-demo parity test needs node)
 ```
 
 Requires Python 3.12+ and network access for the `etl` step only (the tests are offline;
@@ -59,6 +63,19 @@ FRED CSV (public, no key)            seeded synthetic book (10 positions)
    qa.py: question -> validated intent -> computed figures -> templated answer
           (rules by default; optional LLM may only emit the intent JSON)
 ```
+
+## Static demo (GitHub Pages)
+
+GitHub Pages serves static files only, so the hosted demo cannot run the Python engine live. Instead `python -m riskmart snapshot`
+runs the real engine once and stores the grounded answer, result cards and sources for each of the **45 supported question variants**
+(every confidence level, method and asset class that changes an answer) in `docs/snapshot.json`. `docs/static_backend.js` parses the user's
+question with a JavaScript port of the rule planner and replays the stored answer through the same chat UI.
+
+What that means: the numbers on the hosted page are real engine output for the data date shown in its banner, but **the browser computes
+nothing**, the data is a snapshot (not refreshed automatically), and the data-refresh action is disabled. `tests/test_static_demo.py` runs
+the JS backend under node and asserts its event stream (intent, tool calls, cards, answer text, sources, refusals, follow-ups, approval
+request) is identical to the Python agent's for ~70 questions. Only aggregate figures for the synthetic book and per-day regime labels are
+published, not raw market series.
 
 ## Key design decisions
 
@@ -108,7 +125,7 @@ FRED CSV (public, no key)            seeded synthetic book (10 positions)
 **Result of the ML model (real data, last run): it does not beat the baseline.**
 Over the 249-day backtest, regime-conditional VaR and plain VaR had the *same* number of exceptions: 4 vs 4 at 99% (2.5 expected) and
 20 vs 20 at 95% (12.4 expected; the Kupiec test rejects at 5% for *both* at 95%). On 9 of 249 days the conditional sample was too thin and the model
-fell back to plain VaR. Today's classification is borderline (P(stressed) ~43%). So the model is a descriptive tool (a labelled view of
+fell back to plain VaR. The classification is borderline and moves with new data: P(stressed) was 43% (calm) on data through 2026-11-05 and 57% (stressed) after four more days. So the model is a descriptive tool (a labelled view of
 volatility states and a more conservative VaR when stressed), not a demonstrated accuracy improvement. The Q&A can answer "what regime are we in?"
 from these computed figures.
 
@@ -134,6 +151,7 @@ from these computed figures.
   unsupported confidence levels and anything without a matching intent. It can wrongly refuse valid phrasings.
   The optional **LLM path is not tested against the live API** (no key was used); its parsing/validation is tested
   with fake LLM outputs only.
+- The hosted demo is a snapshot (see "Static demo"); regenerate and push `docs/` to update it.
 - No auth, no concurrency controls, no scheduler; it is a single-user demo. The GitHub Actions workflow runs the offline test suite on push (Python 3.12, latest dependencies; its first run caught a pandas-3 NULL-handling bug, now fixed). `tests/test_real_data.py` is skipped in CI because it needs the downloaded mart.
 - Data licensing: FRED hosts third-party series (e.g. S&P, ICE) under their own terms. This repo ships no
   data; `etl` downloads it for your own use.

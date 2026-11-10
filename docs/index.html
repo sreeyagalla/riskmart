@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
+<title>riskmart - risk assistant</title>
+<style>
+:root{--bg:#f7f7f5;--card:#fff;--ink:#1c1c1a;--ink2:#55554f;--mute:#85857d;--line:#e3e3dd;--accent:#2f6fa8;--loss:#b4432f;--good:#2e7d4f;--warn:#9a6a00;--user:#e8f0f8}
+@media (prefers-color-scheme:dark){:root{--bg:#161614;--card:#1f1f1c;--ink:#ecece6;--ink2:#b5b5ab;--mute:#85857d;--line:#33332f;--accent:#6fa8dc;--loss:#e07a63;--good:#6cc08b;--warn:#e0b04a;--user:#23303d}}
+*{box-sizing:border-box}html,body{height:100%}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,Segoe UI,sans-serif;display:flex;flex-direction:column}
+header{padding:12px 16px;border-bottom:1px solid var(--line);display:flex;gap:12px;align-items:baseline;flex-wrap:wrap}
+header h1{font-size:17px;margin:0}header a{color:var(--accent);font-size:13px}
+.disc{font-size:12px;color:var(--ink2);padding:6px 16px;background:var(--card);border-bottom:1px solid var(--line)}
+#log{flex:1;overflow:auto;padding:16px;max-width:860px;width:100%;margin:0 auto}
+.msg{margin:0 0 16px;display:flex;flex-direction:column}
+.me{align-self:flex-end;background:var(--user);padding:8px 12px;border-radius:12px;max-width:80%}
+.bot{max-width:100%}
+.tools{display:flex;flex-direction:column;gap:3px;margin-bottom:8px}
+.tool{font:12px ui-monospace,Consolas,monospace;color:var(--ink2);display:flex;gap:6px;align-items:center}
+.tool .st{width:14px;text-align:center}.tool.done .st{color:var(--good)}.spin{display:inline-block;animation:sp 1s linear infinite}@keyframes sp{to{transform:rotate(360deg)}}
+.cards{display:flex;flex-direction:column;gap:8px;margin-bottom:8px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.card h3{font-size:12px;font-weight:600;color:var(--ink2);margin:0 0 6px;text-transform:uppercase;letter-spacing:.03em}
+.tiles{display:flex;gap:16px;flex-wrap:wrap}.tile .k{font-size:12px;color:var(--ink2)}.tile .v{font-size:22px;font-weight:600}
+.bar{display:grid;grid-template-columns:90px 1fr 100px;gap:8px;align-items:center;font-size:13px;margin:3px 0}
+.bar i{display:block;height:14px;background:var(--accent);border-radius:3px}.bar b{text-align:right;font-weight:500}
+.text{white-space:pre-wrap}.refuse{color:var(--warn)}
+.badge{display:inline-block;font-size:11px;border:1px solid var(--line);border-radius:10px;padding:1px 8px;margin-right:6px;color:var(--ink2)}
+details{font-size:12px;color:var(--ink2);margin-top:6px}details div{padding:1px 0}
+.approval{border-color:var(--warn)}.approval p{margin:4px 0 10px}
+button{font:inherit;cursor:pointer;border-radius:6px;border:1px solid var(--line);padding:6px 14px;background:var(--card);color:var(--ink)}
+button.pri{background:var(--accent);border-color:var(--accent);color:#fff}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}.chips button{font-size:12px;padding:3px 10px;color:var(--accent)}
+form{display:flex;gap:8px;padding:12px 16px;border-top:1px solid var(--line);max-width:860px;width:100%;margin:0 auto}
+input{flex:1;padding:10px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--ink);font:inherit}
+</style>
+</head>
+<body>
+<header><h1>Risk assistant</h1><a href="/">&larr; dashboard</a><a href="/docs">API docs</a></header>
+<div class="disc">Demo on a <b>synthetic portfolio</b> with <b>real public market data</b> (FRED). Every number comes from computed data and is shown with its source; the assistant refuses what it cannot compute. Not investment advice.</div>
+<div id="log">
+  <div class="msg bot"><div class="text">Hi - ask me about the portfolio's risk. I run real calculations (full-revaluation VaR, expected shortfall, CS01/DV01, backtest, ML volatility regime) and show each step. Follow-ups work ("and at 95%?", "what about credit?").</div></div>
+  <div class="chips" id="chips"></div>
+</div>
+<form id="f"><input id="q" autocomplete="off" placeholder="e.g. What is the 99% VaR of the portfolio?" aria-label="Ask a question"><button class="pri" id="send">Send</button></form>
+<script>window.RISKMART_STATIC=true</script>
+<script src="static_backend.js"></script>
+
+<script>
+const $=s=>document.querySelector(s), log=$("#log");
+let ctx=null, busy=false;
+const EX=["What is the 99% VaR of the portfolio?","And at 95%?","Show VaR by asset class","What volatility regime are we in?","What is the CS01?","How did the backtest do?","Refresh the market data","What will the S&P do tomorrow?"];
+EX.forEach(t=>{const b=document.createElement("button");b.textContent=t;b.onclick=()=>ask(t);$("#chips").appendChild(b)});
+function el(tag,cls,txt){const e=document.createElement(tag);if(cls)e.className=cls;if(txt!=null)e.textContent=txt;return e}
+function scroll(){log.scrollTop=log.scrollHeight}
+function renderCard(c){
+  const d=el("div","card"); d.appendChild(el("h3",null,c.title));
+  if(c.kind==="metrics"){const t=el("div","tiles");c.items.forEach(i=>{const x=el("div","tile");x.appendChild(el("div","k",i.label));x.appendChild(el("div","v",i.value));t.appendChild(x)});d.appendChild(t)}
+  else if(c.kind==="bars"){const mx=Math.max(...c.items.map(i=>Math.abs(i.value)))||1;c.items.forEach(i=>{const r=el("div","bar");r.appendChild(el("span",null,i.label));const w=el("span");const b=el("i");b.style.width=Math.abs(i.value)/mx*100+"%";if(i.value<0)b.style.background="var(--loss)";w.appendChild(b);r.appendChild(w);r.appendChild(el("b",null,(i.value<0?"-":"")+i.display));d.appendChild(r)})}
+  else if(c.kind==="strip"){const NS="http://www.w3.org/2000/svg",s=document.createElementNS(NS,"svg"),n=c.items.length;s.setAttribute("viewBox","0 0 1000 20");s.setAttribute("width","100%");s.setAttribute("role","img");s.setAttribute("aria-label","calm vs stressed days");
+    c.items.forEach((v,i)=>{const r=document.createElementNS(NS,"rect");r.setAttribute("x",i*1000/n);r.setAttribute("width",Math.max(1000/n,1));r.setAttribute("height",20);r.setAttribute("fill",v===1?"var(--loss)":v===0?"var(--accent)":"var(--line)");s.appendChild(r)});d.appendChild(s);
+    d.appendChild(el("div","k",`${c.dates[0]} to ${c.dates[1]} · blue = calm, red = stressed`)).style.cssText="font-size:12px;color:var(--ink2);margin-top:4px"}
+  return d}
+const STATIC=!!window.RISKMART_STATIC;
+async function* sseTransport(text,ctx){
+  const r=await fetch("/api/chat",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({question:text,context:ctx})});
+  const rd=r.body.getReader(),dec=new TextDecoder();let buf="";
+  while(true){const {done,value}=await rd.read();if(done)break;buf+=dec.decode(value,{stream:true});
+    let i;while((i=buf.indexOf("\n\n"))>=0){const raw=buf.slice(0,i);buf=buf.slice(i+2);if(raw.startsWith("data: "))yield JSON.parse(raw.slice(6))}}
+}
+const transport=STATIC?(t,c)=>window.RiskmartStatic.chat(t,c,12):sseTransport;
+const approveCall=STATIC?(id,v)=>window.RiskmartStatic.approve(id,v):async(id,v)=>(await fetch("/api/chat/approve",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({id:id,approve:v})})).json();
+async function ask(text){
+  if(busy||!text.trim())return;busy=true;$("#send").disabled=true;$("#q").value="";
+  log.appendChild(el("div","msg")).appendChild(el("div","me",text));
+  const m=el("div","msg bot"),tools=el("div","tools"),cards=el("div","cards"),txt=el("div","text");m.append(tools,cards,txt);log.appendChild(m);scroll();
+  const toolEls={};
+  try{
+    for await(const ev of transport(text,ctx)){handle(ev,m,tools,cards,txt,toolEls);scroll()}
+  }catch(e){txt.textContent="Connection problem: "+e.message;txt.className="text refuse"}
+  busy=false;$("#send").disabled=false;$("#q").focus();
+}
+function handle(ev,m,tools,cards,txt,toolEls){
+  switch(ev.type){
+  case "plan":{if(ev.intent&&ev.intent.intent){const b=el("div",null);b.style.marginBottom="6px";b.appendChild(el("span","badge","intent: "+ev.intent.intent));b.appendChild(el("span","badge","parser: "+ev.parser));m.insertBefore(b,tools)}break}
+  case "tool_call":{const t=el("div","tool");t.appendChild(el("span","st","⟳")).classList.add("spin");t.appendChild(el("span",null,ev.name));tools.appendChild(t);toolEls[ev.id]=t;break}
+  case "tool_result":{const t=toolEls[ev.id];if(t){t.classList.add("done");const s=t.querySelector(".st");s.classList.remove("spin");s.textContent="✓";t.appendChild(el("span",null,"- "+ev.summary)).style.color="var(--mute)"}break}
+  case "card":cards.appendChild(renderCard(ev));break;
+  case "token":txt.textContent+=ev.text;break;
+  case "refusal":{txt.className="text refuse";const b=el("span","badge","guardrail: not answerable from computed data");m.insertBefore(b,tools);break}
+  case "sources":{const d=el("details");d.appendChild(el("summary",null,`Sources (${ev.items.length} figures)`));ev.items.forEach(i=>d.appendChild(el("div",null,`${i.label.replace(/_/g," ")} = ${i.display}  (${i.source})`)));m.appendChild(d);break}
+  case "final":ctx=ev.intent;break;
+  case "approval_required":{
+    const c=el("div","card approval");c.appendChild(el("h3",null,"Approval required"));c.appendChild(el("b",null,ev.title));c.appendChild(el("p",null,ev.detail));
+    const ok=el("button","pri","Approve"),no=el("button",null,"Reject");no.style.marginLeft="8px";
+    const act=async v=>{ok.disabled=no.disabled=true;const j=await approveCall(ev.id,v);
+      c.appendChild(el("p",null,j.status==="executed"?`Done: loaded ${j.result.rows_raw.toLocaleString()} source rows, ${j.result.rows_panel.toLocaleString()} panel rows; data-quality: ${j.result.dq.pass} pass / ${j.result.dq.warn} warn / ${j.result.dq.fail} fail.`:(j.message||j.detail||"Rejected.")))};
+    ok.onclick=()=>act(true);no.onclick=()=>act(false);c.append(ok,no);cards.appendChild(c);break}
+  }
+}
+$("#f").onsubmit=e=>{e.preventDefault();ask($("#q").value)};
+(async()=>{
+  if(STATIC){
+    const R=await window.RiskmartStatic.load("snapshot.json"),mt=R.meta();
+    const b=el("div","disc");b.innerHTML="<b>Static demo.</b> Answers were precomputed by the Python risk engine from real public data through <b>"+mt.data_through+"</b> (snapshot generated "+mt.generated_at+", "+mt.n_entries+" question variants) and are replayed here; the browser computes nothing. Run the repo locally for live calculation and the approval flow.";
+    document.querySelector(".disc").after(b);
+    const a=document.querySelector("header a");a.textContent="source on GitHub";a.href="https://github.com/sreeyagalla/riskmart";
+    document.querySelectorAll("header a")[1].remove();
+  }
+  for(const q of new URLSearchParams(location.search).getAll("q")){await ask(q)}})();
+</script>
+</body>
+</html>

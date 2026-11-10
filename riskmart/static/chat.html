@@ -44,6 +44,7 @@ input{flex:1;padding:10px;border-radius:8px;border:1px solid var(--line);backgro
   <div class="chips" id="chips"></div>
 </div>
 <form id="f"><input id="q" autocomplete="off" placeholder="e.g. What is the 99% VaR of the portfolio?" aria-label="Ask a question"><button class="pri" id="send">Send</button></form>
+<!--STATIC_HOOK-->
 <script>
 const $=s=>document.querySelector(s), log=$("#log");
 let ctx=null, busy=false;
@@ -59,16 +60,22 @@ function renderCard(c){
     c.items.forEach((v,i)=>{const r=document.createElementNS(NS,"rect");r.setAttribute("x",i*1000/n);r.setAttribute("width",Math.max(1000/n,1));r.setAttribute("height",20);r.setAttribute("fill",v===1?"var(--loss)":v===0?"var(--accent)":"var(--line)");s.appendChild(r)});d.appendChild(s);
     d.appendChild(el("div","k",`${c.dates[0]} to ${c.dates[1]} · blue = calm, red = stressed`)).style.cssText="font-size:12px;color:var(--ink2);margin-top:4px"}
   return d}
+const STATIC=!!window.RISKMART_STATIC;
+async function* sseTransport(text,ctx){
+  const r=await fetch("/api/chat",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({question:text,context:ctx})});
+  const rd=r.body.getReader(),dec=new TextDecoder();let buf="";
+  while(true){const {done,value}=await rd.read();if(done)break;buf+=dec.decode(value,{stream:true});
+    let i;while((i=buf.indexOf("\n\n"))>=0){const raw=buf.slice(0,i);buf=buf.slice(i+2);if(raw.startsWith("data: "))yield JSON.parse(raw.slice(6))}}
+}
+const transport=STATIC?(t,c)=>window.RiskmartStatic.chat(t,c,12):sseTransport;
+const approveCall=STATIC?(id,v)=>window.RiskmartStatic.approve(id,v):async(id,v)=>(await fetch("/api/chat/approve",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({id:id,approve:v})})).json();
 async function ask(text){
   if(busy||!text.trim())return;busy=true;$("#send").disabled=true;$("#q").value="";
   log.appendChild(el("div","msg")).appendChild(el("div","me",text));
   const m=el("div","msg bot"),tools=el("div","tools"),cards=el("div","cards"),txt=el("div","text");m.append(tools,cards,txt);log.appendChild(m);scroll();
   const toolEls={};
   try{
-    const r=await fetch("/api/chat",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({question:text,context:ctx})});
-    const rd=r.body.getReader(),dec=new TextDecoder();let buf="";
-    while(true){const {done,value}=await rd.read();if(done)break;buf+=dec.decode(value,{stream:true});
-      let i;while((i=buf.indexOf("\n\n"))>=0){const raw=buf.slice(0,i);buf=buf.slice(i+2);if(!raw.startsWith("data: "))continue;handle(JSON.parse(raw.slice(6)),m,tools,cards,txt,toolEls);scroll()}}
+    for await(const ev of transport(text,ctx)){handle(ev,m,tools,cards,txt,toolEls);scroll()}
   }catch(e){txt.textContent="Connection problem: "+e.message;txt.className="text refuse"}
   busy=false;$("#send").disabled=false;$("#q").focus();
 }
@@ -85,13 +92,21 @@ function handle(ev,m,tools,cards,txt,toolEls){
   case "approval_required":{
     const c=el("div","card approval");c.appendChild(el("h3",null,"Approval required"));c.appendChild(el("b",null,ev.title));c.appendChild(el("p",null,ev.detail));
     const ok=el("button","pri","Approve"),no=el("button",null,"Reject");no.style.marginLeft="8px";
-    const act=async v=>{ok.disabled=no.disabled=true;const r=await fetch("/api/chat/approve",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({id:ev.id,approve:v})});const j=await r.json();
+    const act=async v=>{ok.disabled=no.disabled=true;const j=await approveCall(ev.id,v);
       c.appendChild(el("p",null,j.status==="executed"?`Done: loaded ${j.result.rows_raw.toLocaleString()} source rows, ${j.result.rows_panel.toLocaleString()} panel rows; data-quality: ${j.result.dq.pass} pass / ${j.result.dq.warn} warn / ${j.result.dq.fail} fail.`:(j.message||j.detail||"Rejected.")))};
     ok.onclick=()=>act(true);no.onclick=()=>act(false);c.append(ok,no);cards.appendChild(c);break}
   }
 }
 $("#f").onsubmit=e=>{e.preventDefault();ask($("#q").value)};
-(async()=>{for(const q of new URLSearchParams(location.search).getAll("q")){await ask(q)}})();
+(async()=>{
+  if(STATIC){
+    const R=await window.RiskmartStatic.load("snapshot.json"),mt=R.meta();
+    const b=el("div","disc");b.innerHTML="<b>Static demo.</b> Answers were precomputed by the Python risk engine from real public data through <b>"+mt.data_through+"</b> (snapshot generated "+mt.generated_at+", "+mt.n_entries+" question variants) and are replayed here; the browser computes nothing. Run the repo locally for live calculation and the approval flow.";
+    document.querySelector(".disc").after(b);
+    const a=document.querySelector("header a");a.textContent="source on GitHub";a.href="https://github.com/sreeyagalla/riskmart";
+    document.querySelectorAll("header a")[1].remove();
+  }
+  for(const q of new URLSearchParams(location.search).getAll("q")){await ask(q)}})();
 </script>
 </body>
 </html>

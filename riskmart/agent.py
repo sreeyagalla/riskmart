@@ -33,7 +33,7 @@ TOOLS = {
     "regime": ["risk.scenario_pnl (full revaluation)", "regime.GaussianMixture fit", "regime.regime_var"],
 }
 PARAM_LABELS = {"confidence", "window_days", "window_end", "rv_window", "bt_days"}
-REFRESH = re.compile(r"\b(refresh|update|reload|re-?run|re-?fetch|re-?download)\b.*\b(data|etl|market|mart|series)\b", re.I)
+REFRESH = re.compile(qa.PATTERNS["refresh"], re.I)
 _MOD_CLASS = {"equity": "Equity", "equities": "Equity", "stocks": "Equity", "fx": "FX", "currency": "FX",
               "commodity": "Commodity", "commodities": "Commodity", "rates": "Rates", "credit": "Credit"}
 

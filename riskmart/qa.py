@@ -105,49 +105,60 @@ _ALLOWED_CAPS = {"var", "es", "fx", "cs01", "dv01", "i", "what", "how", "show", 
                  "where", "who", "much", "many", "overall", "total", "average", "median", "historical", "parametric"}
 
 
+# Pattern table shared with the static (browser) demo: rules_spec() exports it as JSON and the JS
+# planner is parity-tested against parse_rules(). Order matters (first match wins).
+PATTERNS = {
+    "forecast": _FORECAST.pattern,
+    "confidence": r"(\d{2}(?:\.\d)?)\s*(%|percent)",
+    "parametric": r"parametric|normal|variance[- ]covariance|delta[- ]normal",
+    "by_class": r"by (asset )?class|each asset|per asset|breakdown",
+    "var": r"\bvar\b|value[- ]at[- ]risk",
+    "refresh": r"\b(refresh|update|reload|re-?run|re-?fetch|re-?download)\b.*\b(data|etl|market|mart|series)\b",
+}
+INTENT_ORDER = [
+    ("regime", r"regime|stressed|calm market|volatility state"),
+    ("data_quality", r"data quality|dq|quality (check|issue)|missing|stale|outlier"),
+    ("backtest", r"backtest|back-test|exception|kupiec"),
+    ("cs01", r"\bcs01\b|spread (sensitivity|risk|dv01)|credit spread"),
+    ("dv01", r"\bdv01\b|duration|interest[- ]rate (sensitivity|risk)"),
+    ("worst_day", r"worst|largest loss|biggest loss|max(imum)? loss"),
+    ("exposure", r"exposure|notional|gross|net position|market value"),
+    ("portfolio_es", r"expected shortfall|\bes\b|cvar|tail loss"),
+]
+
+
+def rules_spec() -> dict:
+    return {"patterns": PATTERNS, "intent_order": INTENT_ORDER, "class_words": _CLASS_WORDS,
+            "allowed_caps": sorted(_ALLOWED_CAPS), "allowed_confidence": list(config.ALLOWED_CONFIDENCE),
+            "supported_examples": SUPPORTED_EXAMPLES, "refusal": REFUSAL}
+
+
 def parse_rules(q: str):
     """Returns (Intent | None, refusal_reason | None)."""
     ql = q.lower()
-    if _FORECAST.search(q):
+    if re.search(PATTERNS["forecast"], q, re.I):
         return None, "forecast/advice"
     # unknown named entities (e.g. company names) -> refuse rather than guess
     for w in re.findall(r"\b[A-Z][A-Za-z0-9&]+\b", q):
         if w.lower() not in _ALLOWED_CAPS:
             return None, f"unknown entity {w}"
     conf = 0.99
-    m = re.search(r"(\d{2}(?:\.\d)?)\s*(%|percent)", ql)
+    m = re.search(PATTERNS["confidence"], ql)
     if m:
         conf = float(m.group(1)) / 100.0
         if conf not in config.ALLOWED_CONFIDENCE:
             return None, "unsupported confidence level"
-    method = "parametric" if re.search(r"parametric|normal|variance[- ]covariance|delta[- ]normal", ql) else "historical"
+    method = "parametric" if re.search(PATTERNS["parametric"], ql) else "historical"
     ac = None
     for word, cls in _CLASS_WORDS.items():
         if re.search(rf"\b{word}\b", ql):
             ac = cls
             break
-    by_class = bool(re.search(r"by (asset )?class|each asset|per asset|breakdown", ql))
-    if re.search(r"regime|stressed|calm market|volatility state", ql):
-        i = "regime"
-    elif re.search(r"data quality|dq|quality (check|issue)|missing|stale|outlier", ql):
-        i = "data_quality"
-    elif re.search(r"backtest|back-test|exception|kupiec", ql):
-        i = "backtest"
-    elif re.search(r"\bcs01\b|spread (sensitivity|risk|dv01)|credit spread", ql):
-        i = "cs01"
-    elif re.search(r"\bdv01\b|duration|interest[- ]rate (sensitivity|risk)", ql):
-        i = "dv01"
-    elif re.search(r"worst|largest loss|biggest loss|max(imum)? loss", ql):
-        i = "worst_day"
-    elif re.search(r"exposure|notional|gross|net position|market value", ql):
-        i = "exposure"
-    elif re.search(r"expected shortfall|\bes\b|cvar|tail loss", ql):
-        i = "portfolio_es"
-    elif by_class and re.search(r"\bvar\b|value[- ]at[- ]risk", ql):
-        i = "var_by_asset_class"
-    elif re.search(r"\bvar\b|value[- ]at[- ]risk", ql):
-        i = "var_by_asset_class" if ac else "portfolio_var"
-    else:
+    by_class = bool(re.search(PATTERNS["by_class"], ql))
+    i = next((name for name, pat in INTENT_ORDER if re.search(pat, ql)), None)
+    if i is None and re.search(PATTERNS["var"], ql):
+        i = "var_by_asset_class" if (by_class or ac) else "portfolio_var"
+    if i is None:
         return None, "no supported intent"
     return validate_intent({"intent": i, "confidence": conf, "method": method, "asset_class": ac}), None
 

@@ -15,6 +15,9 @@ def main():
     s = sub.add_parser("serve", help="start the API + dashboard")
     s.add_argument("--db", default=str(config.DEFAULT_DB))
     s.add_argument("--port", type=int, default=8000)
+    n = sub.add_parser("snapshot", help="build the static GitHub Pages demo (precomputed answers) into a folder")
+    n.add_argument("--db", default=str(config.DEFAULT_DB))
+    n.add_argument("--out", default="docs")
     a = sub.add_parser("ask", help="ask a question from the command line")
     a.add_argument("question")
     a.add_argument("--db", default=str(config.DEFAULT_DB))
@@ -27,6 +30,9 @@ def main():
         import uvicorn
         from .api import create_app
         uvicorn.run(create_app(args.db), host="127.0.0.1", port=args.port)
+    elif args.cmd == "snapshot":
+        from .snapshot import write
+        print(json.dumps(write(sqlite3.connect(args.db), args.out), indent=2))
     else:
         from .qa import answer_question
         print(json.dumps(answer_question(sqlite3.connect(args.db), args.question).to_dict(), indent=2))
