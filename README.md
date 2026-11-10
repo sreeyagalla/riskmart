@@ -117,7 +117,6 @@ from these computed figures.
   unsupported confidence levels and anything without a matching intent. It can wrongly refuse valid phrasings.
   The optional **LLM path is not tested against the live API** (no key was used); its parsing/validation is tested
   with fake LLM outputs only.
-- No auth, no concurrency controls, no scheduler; it is a single-user demo. The GitHub Actions workflow
-  in `.github/workflows` has not been run yet.
+- No auth, no concurrency controls, no scheduler; it is a single-user demo. The GitHub Actions workflow runs the offline test suite on push (Python 3.12, latest dependencies; its first run caught a pandas-3 NULL-handling bug, now fixed). `tests/test_real_data.py` is skipped in CI because it needs the downloaded mart.
 - Data licensing: FRED hosts third-party series (e.g. S&P, ICE) under their own terms. This repo ships no
   data; `etl` downloads it for your own use.
