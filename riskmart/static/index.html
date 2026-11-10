@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>riskmart - market risk dashboard</title>
+<style>
+:root{--bg:#f7f7f5;--card:#fff;--ink:#1c1c1a;--ink2:#55554f;--mute:#85857d;--line:#e3e3dd;
+--accent:#2f6fa8;--loss:#b4432f;--good:#2e7d4f;--warn:#9a6a00;--bad:#b4432f}
+@media (prefers-color-scheme:dark){:root{--bg:#161614;--card:#1f1f1c;--ink:#ecece6;--ink2:#b5b5ab;--mute:#85857d;
+--line:#33332f;--accent:#6fa8dc;--loss:#e07a63;--good:#6cc08b;--warn:#e0b04a;--bad:#e07a63}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,Segoe UI,sans-serif}
+main{max-width:1080px;margin:0 auto;padding:20px 16px 48px}
+h1{font-size:20px;margin:0}h2{font-size:15px;margin:0 0 10px}
+.sub{color:var(--ink2);font-size:13px;margin:4px 0 16px}
+.ctrl{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:16px;font-size:13px;color:var(--ink2)}
+select{background:var(--card);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:4px 8px}
+.grid{display:grid;gap:12px}.kpis{grid-template-columns:repeat(auto-fit,minmax(170px,1fr))}
+.two{grid-template-columns:repeat(auto-fit,minmax(320px,1fr));margin-top:12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px}
+.k{font-size:12px;color:var(--ink2)}.v{font-size:24px;font-weight:600;margin-top:2px}.n{font-size:12px;color:var(--mute)}
+table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;padding:5px 6px;border-bottom:1px solid var(--line)}
+th{color:var(--ink2);font-weight:500}td.r,th.r{text-align:right;font-variant-numeric:tabular-nums}
+.badge{font-size:12px;white-space:nowrap}.pass{color:var(--good)}.warn{color:var(--warn)}.fail{color:var(--bad)}
+svg text{fill:var(--ink2);font-size:11px}.axis{stroke:var(--line)}
+.q{display:flex;gap:8px}.q input{flex:1;padding:8px;border-radius:6px;border:1px solid var(--line);background:var(--bg);color:var(--ink);font:inherit}
+button,.chip{background:var(--accent);color:#fff;border:0;border-radius:6px;padding:8px 14px;font:inherit;cursor:pointer}
+.chip{background:transparent;color:var(--accent);border:1px solid var(--line);padding:3px 9px;font-size:12px;margin:6px 6px 0 0}
+#ans{margin-top:12px}.refuse{color:var(--warn)}details{margin-top:8px;font-size:12px;color:var(--ink2)}
+.tip{position:fixed;pointer-events:none;background:var(--card);border:1px solid var(--line);padding:4px 8px;border-radius:6px;font-size:12px;display:none}
+.note{font-size:12px;color:var(--mute);margin-top:8px}
+</style>
+</head>
+<body>
+<main>
+<h1>Market risk dashboard</h1>
+<p class="sub" id="sub">Loading...</p>
+<div class="ctrl">
+  <label>Confidence <select id="cl"><option value="0.95">95%</option><option value="0.975">97.5%</option><option value="0.99" selected>99%</option></select></label>
+  <label>Lookback <select id="lb"><option>250</option><option selected>500</option></select> days</label>
+  <a href="/api/report.xml" style="color:var(--accent)">XML</a> <a href="/api/report" style="color:var(--accent)">JSON</a> <a href="/docs" style="color:var(--accent)">API docs</a>
+</div>
+<div class="grid kpis" id="kpis"></div>
+<div class="grid two">
+  <div class="card"><h2>Scenario P&amp;L distribution (today's book)</h2><div id="hist"></div>
+    <div class="note">Each bar counts historical days; the line marks the historical VaR. Hypothetical P&amp;L of a constant portfolio.</div></div>
+  <div class="card"><h2>Standalone VaR by asset class</h2><div id="bars"></div>
+    <div class="note" id="divnote"></div></div>
+</div>
+<div class="card" style="margin-top:12px"><h2>ML volatility regime <span class="n">(2-state Gaussian mixture, scikit-learn)</span></h2>
+  <div id="reg">Loading...</div><div id="strip"></div>
+  <div class="note">Strip: one cell per day in the window; <span style="color:var(--accent)">&#9632;</span> calm, <span style="color:var(--loss)">&#9632;</span> stressed. Regime-conditional VaR uses only scenario days that followed a day in today's regime.</div>
+  <p><button id="rbt">Run backtest: regime VaR vs plain VaR (~10 s)</button> <span id="rbtout"></span></p></div>
+<div class="card" style="margin-top:12px"><h2>Ask a question (answers only from computed figures)</h2>
+  <div class="q"><input id="qi" placeholder="e.g. What is the 99% VaR of the portfolio?"><button id="qb">Ask</button></div>
+  <div id="chips"></div><div id="ans"></div></div>
+<div class="grid two">
+  <div class="card"><h2>Positions <span class="n">(synthetic, seeded)</span></h2><div id="pos"></div></div>
+  <div class="card"><h2>Data quality (latest ETL run)</h2><div id="dq" style="max-height:340px;overflow:auto"></div></div>
+</div>
+</main>
+<div class="tip" id="tip"></div>
+<script>
+const $=s=>document.querySelector(s), usd=v=>(v<0?"-":"")+"$"+Math.abs(Math.round(v)).toLocaleString();
+const tip=$("#tip");
+function hover(el,txt){el.addEventListener("mousemove",e=>{tip.style.display="block";tip.textContent=txt;tip.style.left=e.clientX+12+"px";tip.style.top=e.clientY+12+"px"});el.addEventListener("mouseleave",()=>tip.style.display="none")}
+function svg(tag,attrs,parent){const e=document.createElementNS("http://www.w3.org/2000/svg",tag);for(const k in attrs)e.setAttribute(k,attrs[k]);parent&&parent.appendChild(e);return e}
+async function j(u,o){const r=await fetch(u,o);return r.json()}
+function kpi(k,v,n){return `<div class="card"><div class="k">${k}</div><div class="v">${v}</div><div class="n">${n||""}</div></div>`}
+async function load(){
+  const cl=$("#cl").value, lb=$("#lb").value;
+  const r=await j(`/api/report?confidence=${cl}&lookback=${lb}&distribution=true`);
+  const P=r.portfolio, b=r.backtest, c=(r.confidence*100)+"%";
+  $("#sub").textContent=`As of ${r.as_of} · ${r.window.days}-day window ${r.window.start} to ${r.window.end} · market data: public FRED series · positions: synthetic`;
+  const bt=b.tested_days?`${b.exceptions} vs ${b.expected.toFixed(1)}`:"n/a";
+  const verdict=b.kupiec?(b.kupiec.reject_at_5pct?"✕ Kupiec rejects at 5%":"✓ Kupiec p="+b.kupiec.p_value.toFixed(2)):"";
+  $("#kpis").innerHTML=kpi(`${c} 1-day VaR (historical)`,usd(P.var_hist),`parametric: ${usd(P.var_param)}`)+
+   kpi(`${c} expected shortfall`,usd(P.es_hist),`worst day ${P.worst_day.date}: ${usd(P.worst_day.pnl_usd)}`)+
+   kpi("DV01",usd(P.dv01_usd),`CS01 ${usd(P.cs01_usd)} · USD per 1bp`)+
+   kpi("Backtest",bt,`exceptions vs expected · ${b.tested_days} days · ${verdict}`)+
+   kpi("Exposure",usd(P.net_exposure_usd),`gross ${usd(P.gross_exposure_usd)}`);
+  hist(r.pnl_distribution,P.var_hist);
+  bars(r.by_asset_class);
+  $("#divnote").textContent=`Sum of standalone VaRs ${usd(P.sum_standalone_var)}; portfolio VaR ${usd(P.var_hist)}; diversification benefit ${usd(P.diversification_benefit)}.`;
+}
+function hist(d,v){
+  const W=480,H=220,m={l:34,r:8,t:8,b:28},bins=30,lo=Math.min(...d),hi=Math.max(...d),w=(hi-lo)/bins;
+  const cnt=Array(bins).fill(0);d.forEach(x=>cnt[Math.min(bins-1,Math.floor((x-lo)/w))]++);
+  const mx=Math.max(...cnt),sx=x=>m.l+(x-lo)/(hi-lo)*(W-m.l-m.r),sy=y=>H-m.b-y/mx*(H-m.t-m.b);
+  const s=svg("svg",{viewBox:`0 0 ${W} ${H}`,width:"100%",role:"img","aria-label":"Histogram of scenario P&L with VaR line"});
+  $("#hist").innerHTML="";$("#hist").appendChild(s);
+  svg("line",{x1:m.l,x2:W-m.r,y1:H-m.b,y2:H-m.b,class:"axis"},s);
+  cnt.forEach((n,i)=>{const x=sx(lo+i*w),r=svg("rect",{x:x+1,y:sy(n),width:Math.max(1,sx(lo+(i+1)*w)-x-2),height:H-m.b-sy(n),fill:"var(--accent)",rx:2},s);
+    hover(r,`${usd(lo+i*w)} to ${usd(lo+(i+1)*w)}: ${n} days`)});
+  svg("line",{x1:sx(-v),x2:sx(-v),y1:m.t,y2:H-m.b,stroke:"var(--loss)","stroke-width":2},s);
+  svg("text",{x:sx(-v)+4,y:m.t+10},s).textContent="VaR "+usd(-v);
+  [[lo,"start"],[0,"middle"],[hi,"end"]].forEach(([t,a])=>{svg("text",{x:sx(t),y:H-10,"text-anchor":a},s).textContent=usd(t)});
+  svg("text",{x:m.l-4,y:m.t+10,"text-anchor":"end"},s).textContent=mx;
+}
+function bars(bc){
+  const e=Object.entries(bc).sort((a,b)=>b[1].var_hist-a[1].var_hist),mx=e[0][1].var_hist,W=480,rh=34,H=e.length*rh+6;
+  const s=svg("svg",{viewBox:`0 0 ${W} ${H}`,width:"100%",role:"img","aria-label":"Standalone VaR by asset class"});
+  $("#bars").innerHTML="";$("#bars").appendChild(s);
+  e.forEach(([k,v],i)=>{const y=i*rh+4,w=v.var_hist/mx*(W-190);
+    svg("text",{x:0,y:y+17},s).textContent=k;
+    const r=svg("rect",{x:80,y:y+4,width:w,height:18,fill:"var(--accent)",rx:4},s);
+    svg("text",{x:80+w+6,y:y+17},s).textContent=usd(v.var_hist);
+    hover(r,`${k}: VaR ${usd(v.var_hist)}, ES ${usd(v.es_hist)}, exposure ${usd(v.exposure_usd)}`)});
+}
+async function regime(){
+  const g=await j(`/api/regime?confidence=${$("#cl").value}&lookback=${$("#lb").value}`);
+  const c=g.current;
+  $("#reg").innerHTML=`Today: <b>${c.regime}</b> (P(stressed) ${(c.p_stressed*100).toFixed(0)}%). Regime-conditional VaR <b>${usd(g.var_regime)}</b> vs plain <b>${usd(g.var_plain)}</b> from ${g.conditional_sample_size} scenario days. ${(g.share_of_days_stressed*100).toFixed(0)}% of days in the window are classed stressed.`;
+  const W=1000,n=g.regime_by_day.length,w=W/n,sv=svg("svg",{viewBox:`0 0 ${W} 22`,width:"100%",role:"img","aria-label":"Regime label per day"});
+  $("#strip").innerHTML="";$("#strip").appendChild(sv);
+  g.regime_by_day.forEach((d,i)=>{const r=svg("rect",{x:i*w,y:0,width:Math.max(w,1),height:22,fill:d.stressed===1?"var(--loss)":d.stressed===0?"var(--accent)":"var(--line)"},sv);hover(r,`${d.date}: ${d.stressed===1?"stressed":d.stressed===0?"calm":"warm-up"}`)});
+}
+$("#rbt").onclick=async()=>{
+  $("#rbtout").textContent="running...";
+  const g=await j(`/api/regime?confidence=${$("#cl").value}&lookback=${$("#lb").value}&backtest=true`),b=g.backtest;
+  if(!b||!b.tested_days){$("#rbtout").textContent="not enough history";return}
+  const k=x=>x.kupiec.reject_at_5pct?"✕ Kupiec rejects":"✓ Kupiec p="+x.kupiec.p_value.toFixed(2);
+  $("#rbtout").textContent=`${b.tested_days} days, ${b.expected.toFixed(1)} expected exceptions - plain: ${b.plain.exceptions} (${k(b.plain)}); regime: ${b.regime.exceptions} (${k(b.regime)}). Regime sample too thin on ${b.fallback_days} days (fell back to plain).`;
+};
+async function tables(){
+  const p=await j("/api/positions");
+  $("#pos").innerHTML="<table><tr><th>Position</th><th>Class</th><th class='r'>Notional</th></tr>"+p.map(x=>`<tr><td>${x.name}</td><td>${x.asset_class}</td><td class="r">${usd(x.notional_usd)}</td></tr>`).join("")+"</table>";
+  const d=await j("/api/dq"),ic={pass:"✓ pass",warn:"▲ warn",fail:"✕ fail"};
+  $("#dq").innerHTML="<table><tr><th>Status</th><th>Check</th><th>Detail</th></tr>"+d.map(x=>`<tr><td class="badge ${x.status}">${ic[x.status]}</td><td>${x.check_name}<div class="n">${x.series_id||"panel"}</div></td><td>${x.detail}</td></tr>`).join("")+"</table>";
+}
+async function ask(q){
+  const a=await j("/api/ask",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({question:q})});
+  const el=$("#ans");el.innerHTML="";const p=document.createElement("div");p.textContent=a.answer;p.className=a.supported?"":"refuse";el.appendChild(p);
+  if(a.supported){const d=document.createElement("details");d.innerHTML="<summary>Figures used ("+a.figures.length+") · parser: "+a.parser+"</summary>"+a.figures.map(f=>`<div>${f.label} = ${f.display} <span class="n">(${f.source})</span></div>`).join("");el.appendChild(d)}
+}
+const ex=["What is the 99% VaR of the portfolio?","What volatility regime are we in?","Show VaR by asset class","What was the worst day?","What is the CS01?","How did the backtest do?","What will the S&P do tomorrow?"];
+$("#chips").innerHTML=ex.map(e=>`<button class="chip">${e}</button>`).join("");
+document.querySelectorAll(".chip").forEach(b=>b.onclick=()=>{$("#qi").value=b.textContent;ask(b.textContent)});
+$("#qb").onclick=()=>ask($("#qi").value);$("#qi").onkeydown=e=>{if(e.key==="Enter")ask($("#qi").value)};
+$("#cl").onchange=$("#lb").onchange=()=>{load();regime()};
+load();tables();regime();
+</script>
+</body>
+</html>
